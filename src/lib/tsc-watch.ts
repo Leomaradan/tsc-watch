@@ -53,7 +53,7 @@ function killProcesses(currentCompilationId: number, killAll: boolean): Promise<
     failureKiller = null;
   }
 
-  if (compilationStartedKiller)   {
+  if (compilationStartedKiller) {
     promisesToWaitFor.push(compilationStartedKiller());
     compilationStartedKiller = null;
   }
@@ -120,13 +120,16 @@ interface INodeSettings {
   signalEmittedFiles: boolean;
 }
 
-function spawnTsc({ maxNodeMem, requestedToListEmittedFiles, signalEmittedFiles }: INodeSettings, args: string[]): ChildProcess {
+function spawnTsc(
+  { maxNodeMem, requestedToListEmittedFiles, signalEmittedFiles }: INodeSettings,
+  args: string[],
+): ChildProcess {
   const tscBin = getTscPath();
   const nodeArgs = [
-    ...((maxNodeMem) ? [`--max_old_space_size=${maxNodeMem}`] : []),
+    ...(maxNodeMem ? [`--max_old_space_size=${maxNodeMem}`] : []),
     tscBin,
-    ...((signalEmittedFiles || requestedToListEmittedFiles) ? ['--listEmittedFiles'] : []),
-    ...args
+    ...(signalEmittedFiles || requestedToListEmittedFiles ? ['--listEmittedFiles'] : []),
+    ...args,
   ];
 
   return spawn('node', nodeArgs);
@@ -153,6 +156,7 @@ tscProcess.stderr.pipe(process.stderr);
 const rl = createInterface({ input: tscProcess.stdout });
 
 let compilationId = 0;
+let lines: string[] = [];
 rl.on('line', function (input) {
   if (noClear) {
     input = deleteClear(input);
@@ -170,12 +174,17 @@ rl.on('line', function (input) {
   compilationErrorSinceStart =
     (!compilationStarted && compilationErrorSinceStart) || compilationError;
 
+  if (compilationErrorSinceStart) {
+    lines.push(line);
+  }
+
   if (state.fileEmitted !== null) {
     Signal.emitFile(state.fileEmitted);
   }
 
   if (compilationStarted) {
     compilationId++;
+    lines = [];
     killProcesses(compilationId, false).then((previousCompilationId) => {
       if (previousCompilationId !== compilationId) {
         return;
@@ -184,7 +193,7 @@ rl.on('line', function (input) {
       Signal.emitStarted();
     });
   }
-  
+
   if (compilationComplete) {
     compilationId++;
     killProcesses(compilationId, false).then((previousCompilationId) => {
@@ -194,7 +203,7 @@ rl.on('line', function (input) {
       runOnCompilationComplete();
 
       if (compilationErrorSinceStart) {
-        Signal.emitFail();
+        Signal.emitFail(lines.join('\n'));
         runOnFailureCommand();
       } else {
         if (firstTime) {
@@ -259,7 +268,7 @@ const Signal = {
   emitStarted: () => sendSignal('started'),
   emitFirstSuccess: () => sendSignal('first_success'),
   emitSuccess: () => sendSignal('success'),
-  emitFail: () => sendSignal('compile_errors'),
+  emitFail: (error: string) => sendSignal(`compile_errors:${error}`),
   emitFile: (path: string) => sendSignal(`file_emitted:${path}`),
 };
 
